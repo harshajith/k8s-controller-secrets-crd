@@ -1,10 +1,17 @@
 package main
 
 import (
+	"fmt"
+	"io/ioutil"
+	"net/http"
+
 	log "github.com/Sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/cbroglie/mustache"
+	v1 "github.com/harshajith/k8s-controller-secrets-crd/pkg/apis/scbsecret/v1"
+	"gopkg.in/yaml.v2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -29,7 +36,7 @@ func (t *TestHandler) Init() error {
 func (t *TestHandler) ObjectCreated(obj interface{}, clientset kubernetes.Interface) {
 	log.Info("TestHandler.ObjectCreated")
 	log.Info(obj)
-	createSecret(clientset)
+	createSecret(obj, clientset)
 }
 
 // ObjectDeleted is called when an object is deleted
@@ -42,23 +49,81 @@ func (t *TestHandler) ObjectUpdated(objOld, objNew interface{}) {
 	log.Info("TestHandler.ObjectUpdated")
 }
 
-func createSecret(clientset kubernetes.Interface) {
-	secretPayload := getSecreteObj()
+func createSecret(scbSecret interface{}, clientset kubernetes.Interface) {
+	secretPayload := getSecreteObj(scbSecret)
+	log.Info("Secret payload to be created", *secretPayload)
 	clientset.CoreV1().Secrets("default").Create(secretPayload)
 	log.Info("secret is successfully created in default namespace")
 }
 
-func getSecreteObj() *corev1.Secret {
+func getSecreteObj(scbSecret interface{}) *corev1.Secret {
 	var secret *corev1.Secret
-	secret = &corev1.Secret{
-		Type: corev1.SecretTypeOpaque,
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "test-secret-harsha-nw",
-			Labels: map[string]string{
-				"heritage": "component-testing",
-				"app":      "super8",
-			},
-		},
+	original, ok := scbSecret.(*v1.ScbSecret)
+	if ok {
+		log.Info("original val", original.Spec.Data)
+		templateStr := marshalToYamlStr(&original.Spec.Data)
+		data := enrichTemplateStr(templateStr)
+
+		enrichedDataMap := map[string]string{}
+		unmarshalYamlStr(data, &enrichedDataMap)
+		secret = populateSecretPayload(enrichedDataMap, original.Name)
 	}
 	return secret
+}
+
+func populateSecretPayload(enrichedDataMap map[string]string, name string) *corev1.Secret {
+	return &corev1.Secret{
+		Type: corev1.SecretTypeOpaque,
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+		},
+		StringData: enrichedDataMap,
+	}
+}
+
+func marshalToYamlStr(data *map[string]string) string {
+	d, err := yaml.Marshal(data)
+	if err != nil {
+		log.Fatalf("error: %v", err)
+	}
+	fmt.Printf("--- t dump:\n%s\n\n", string(d))
+	return string(d)
+}
+
+func unmarshalYamlStr(data string, enrichedDataMap *map[string]string) {
+	err2 := yaml.Unmarshal([]byte(data), enrichedDataMap)
+	if err2 != nil {
+		log.Fatal(err2.Error)
+	}
+	log.Info("final map is: ", enrichedDataMap)
+}
+
+func enrichTemplateStr(templateStr string) string {
+	getDataFromConfigServer()
+	data, err1 := mustache.Render(templateStr, map[string]string{"git_user": "user", "git_password": "password123"})
+	if err1 != nil {
+		log.Panic(err1.Error)
+	}
+	log.Info("template is: ", data)
+	return data
+}
+
+func getDataFromConfigServer() {
+	resp, err := http.Get("http://config-server:8888/master/stores-default.yml")
+	if err != nil {
+		log.Fatal(err.Error)
+	}
+	body, _ := ioutil.ReadAll(resp.Body)
+	log.Info("response from config server: ", string(body))
+
+	m := make(map[interface{}]interface{})
+
+	err1 := yaml.Unmarshal(body, &m)
+	if err1 != nil {
+		log.Fatal(err1.Error)
+	}
+
+	log.Info("map value foo", m["foo"])
+	log.Info("nested value", m["eureka.client.serviceUrl.defaultZone"])
+
 }

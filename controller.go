@@ -127,6 +127,7 @@ func (c *Controller) processNextItem() bool {
 		c.queue.Forget(key)
 	}
 
+	
 	// keep the worker loop running by returning true
 	return true
 }

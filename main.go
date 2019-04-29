@@ -8,8 +8,8 @@ import (
 	log "github.com/Sirupsen/logrus"
 	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
-	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/workqueue"
 
 	scbsecretclientset "github.com/harshajith/k8s-controller-secrets-crd/pkg/client/clientset/versioned"
@@ -19,12 +19,18 @@ import (
 // retrieve the Kubernetes cluster client from outside of the cluster
 func getKubernetesClient() (kubernetes.Interface, scbsecretclientset.Interface) {
 	// construct the path to resolve to `~/.kube/config`
-	kubeConfigPath := os.Getenv("HOME") + "/.kube/config"
+	// kubeConfigPath := os.Getenv("HOME") + "/.kube/config"
 
-	// create the config from the path
-	config, err := clientcmd.BuildConfigFromFlags("", kubeConfigPath)
+	// // create the config from the path
+	// config, err := clientcmd.BuildConfigFromFlags("", kubeConfigPath)
+	// if err != nil {
+	// 	log.Fatalf("getClusterConfig: %v", err)
+	// }
+
+	// creates the in-cluster config
+	config, err := rest.InClusterConfig()
 	if err != nil {
-		log.Fatalf("getClusterConfig: %v", err)
+		panic(err.Error())
 	}
 
 	// generate the client based off of the config
