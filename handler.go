@@ -62,7 +62,7 @@ func getSecreteObj(scbSecret interface{}) *corev1.Secret {
 	if ok {
 		log.Info("original val", original.Spec.Data)
 		templateStr := marshalToYamlStr(&original.Spec.Data)
-		data := enrichTemplateStr(templateStr)
+		data := EnrichTemplateStr(templateStr)
 
 		enrichedDataMap := map[string]string{}
 		unmarshalYamlStr(data, &enrichedDataMap)
@@ -93,25 +93,24 @@ func marshalToYamlStr(data *map[string]string) string {
 func unmarshalYamlStr(data string, enrichedDataMap *map[string]string) {
 	err2 := yaml.Unmarshal([]byte(data), enrichedDataMap)
 	if err2 != nil {
-		log.Fatal(err2.Error)
+		log.Fatal(err2)
 	}
 	log.Info("final map is: ", enrichedDataMap)
 }
 
-func enrichTemplateStr(templateStr string) string {
-	getDataFromConfigServer()
-	data, err1 := mustache.Render(templateStr, map[string]string{"git_user": "user", "git_password": "password123"})
+func EnrichTemplateStr(templateStr string) string {
+	data, err1 := mustache.Render(templateStr, getDataFromConfigServer())
 	if err1 != nil {
-		log.Panic(err1.Error)
+		log.Panic(err1)
 	}
 	log.Info("template is: ", data)
 	return data
 }
 
-func getDataFromConfigServer() {
-	resp, err := http.Get("http://config-server:8888/master/stores-default.yml")
+func getDataFromConfigServer() map[interface{}]interface{} {
+	resp, err := http.Get("http://config-server:8888/master/git-creds-default.yml")
 	if err != nil {
-		log.Fatal(err.Error)
+		log.Fatal(err)
 	}
 	body, _ := ioutil.ReadAll(resp.Body)
 	log.Info("response from config server: ", string(body))
@@ -120,10 +119,11 @@ func getDataFromConfigServer() {
 
 	err1 := yaml.Unmarshal(body, &m)
 	if err1 != nil {
-		log.Fatal(err1.Error)
+		log.Fatal(err1)
 	}
 
 	log.Info("map value foo", m["foo"])
 	log.Info("nested value", m["eureka.client.serviceUrl.defaultZone"])
 
+	return m
 }
