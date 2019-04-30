@@ -5,13 +5,14 @@ import (
 	"io/ioutil"
 	"net/http"
 	"os"
+	"strings"
 
 	log "github.com/Sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/cbroglie/mustache"
-	v1 "github.com/harshajith/k8s-controller-secrets-crd/pkg/apis/scbsecret/v1"
+	v1 "github.com/harshajith/k8s-controller-secrets-crd/pkg/apis/gitsecret/v1"
 	"gopkg.in/yaml.v2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -20,63 +21,77 @@ import (
 type Handler interface {
 	Init() error
 	ObjectCreated(obj interface{}, clientset kubernetes.Interface)
-	ObjectDeleted(obj interface{})
-	ObjectUpdated(objOld, objNew interface{})
+	ObjectDeleted(obj interface{}, clientset kubernetes.Interface)
+	ObjectUpdated(objOld, objNew interface{}, clientset kubernetes.Interface)
 }
 
 // TestHandler is a sample implementation of Handler
-type TestHandler struct{}
+type GitSecretHandler struct{}
 
 // Init handles any handler initialization
-func (t *TestHandler) Init() error {
+func (t *GitSecretHandler) Init() error {
 	log.Info("TestHandler.Init")
 	return nil
 }
 
 // ObjectCreated is called when an object is created
-func (t *TestHandler) ObjectCreated(obj interface{}, clientset kubernetes.Interface) {
+func (t *GitSecretHandler) ObjectCreated(obj interface{}, clientset kubernetes.Interface) {
 	log.Info("TestHandler.ObjectCreated")
-	log.Info(obj)
-	createSecret(obj, clientset)
+	gitSecret, ok := obj.(*v1.GitSecret)
+	if ok {
+		secretPayload := getSecreteObj(gitSecret)
+		log.Info("Secret payload to be created", *secretPayload)
+		clientset.CoreV1().Secrets(gitSecret.ObjectMeta.Namespace).Create(secretPayload)
+		log.Info("secret is successfully created in default namespace")
+	} else {
+		log.Error("Can not cast the object to GitSecret", obj)
+	}
 }
 
 // ObjectDeleted is called when an object is deleted
-func (t *TestHandler) ObjectDeleted(obj interface{}) {
+func (t *GitSecretHandler) ObjectDeleted(obj interface{}, clientset kubernetes.Interface) {
 	log.Info("TestHandler.ObjectDeleted")
+	gitSecret, ok := obj.(*v1.GitSecret)
+	if ok {
+		clientset.CoreV1().Secrets(gitSecret.ObjectMeta.Namespace).Delete(gitSecret.Name, nil)
+		log.Info("Successfully deleted a secret", gitSecret)
+	} else {
+		log.Error("Can not cast the object to GitSecret", obj)
+	}
+
 }
 
 // ObjectUpdated is called when an object is updated
-func (t *TestHandler) ObjectUpdated(objOld, objNew interface{}) {
+func (t *GitSecretHandler) ObjectUpdated(objOld, objNew interface{}, clientset kubernetes.Interface) {
 	log.Info("TestHandler.ObjectUpdated")
-}
-
-func createSecret(scbSecret interface{}, clientset kubernetes.Interface) {
-	secretPayload := getSecreteObj(scbSecret)
-	log.Info("Secret payload to be created", *secretPayload)
-	clientset.CoreV1().Secrets("default").Create(secretPayload)
-	log.Info("secret is successfully created in default namespace")
-}
-
-func getSecreteObj(scbSecret interface{}) *corev1.Secret {
-	var secret *corev1.Secret
-	original, ok := scbSecret.(*v1.ScbSecret)
+	gitSecret, ok := objNew.(*v1.GitSecret)
 	if ok {
-		log.Info("original val", original.Spec.Data)
-		templateStr := marshalToYamlStr(&original.Spec.Data)
-		data := EnrichTemplateStr(templateStr)
-
-		enrichedDataMap := map[string]string{}
-		unmarshalYamlStr(data, &enrichedDataMap)
-		secret = populateSecretPayload(enrichedDataMap, original.Name)
+		secretPayload := getSecreteObj(gitSecret)
+		log.Info("Secret payload to be updated", *secretPayload)
+		clientset.CoreV1().Secrets(gitSecret.ObjectMeta.Namespace).Update(secretPayload)
+		log.Info("secret is successfully updated in default namespace")
+	} else {
+		log.Error("Can not cast the object to GitSecret", objNew)
 	}
+
+}
+
+func getSecreteObj(gitSecret *v1.GitSecret) *corev1.Secret {
+	log.Info("gitSecret val", gitSecret.Spec.Data)
+	templateStr := marshalToYamlStr(&gitSecret.Spec.Data)
+	data := enrichTemplateStr(templateStr, gitSecret)
+
+	enrichedDataMap := map[string]string{}
+	unmarshalYamlStr(data, &enrichedDataMap)
+	secret := populateSecretPayload(enrichedDataMap, gitSecret)
 	return secret
 }
 
-func populateSecretPayload(enrichedDataMap map[string]string, name string) *corev1.Secret {
+func populateSecretPayload(enrichedDataMap map[string]string, gitSecret *v1.GitSecret) *corev1.Secret {
 	return &corev1.Secret{
 		Type: corev1.SecretTypeOpaque,
 		ObjectMeta: metav1.ObjectMeta{
-			Name: name,
+			Name: gitSecret.Name,
 		},
 		StringData: enrichedDataMap,
 	}
@@ -99,8 +114,8 @@ func unmarshalYamlStr(data string, enrichedDataMap *map[string]string) {
 	log.Info("final map is: ", enrichedDataMap)
 }
 
-func EnrichTemplateStr(templateStr string) string {
-	data, err1 := mustache.Render(templateStr, getDataFromConfigServer())
+func enrichTemplateStr(templateStr string, gitSecret *v1.GitSecret) string {
+	data, err1 := mustache.Render(templateStr, getDataFromConfigServer(gitSecret))
 	if err1 != nil {
 		log.Panic(err1)
 	}
@@ -108,10 +123,25 @@ func EnrichTemplateStr(templateStr string) string {
 	return data
 }
 
-func getDataFromConfigServer() map[interface{}]interface{} {
-	profile := os.Getenv("profile")
-	
-	resp, err := http.Get("http://config-server:8888/master/git-creds-default.yml")
+func getDataFromConfigServer(gitSecret *v1.GitSecret) map[interface{}]interface{} {
+	profile, profileOk := os.LookupEnv("PROFILE")
+	project, _ := gitSecret.Spec.Appname
+	if !profileOk {
+		profile = "default"
+	}
+	label := gitSecret.Spec.Label
+	if len(label) == 0 {
+		label = "develop"
+	}
+	configUrl, ok := os.LookupEnv("CONFIG_SERVER_URL")
+	appName := strings.Join([]string{project, "(_)", gitSecret.Spec.Appname, "-", profile, ".yml"}, "")
+	if !ok {
+		configUrl = "http://config-server:8888/master/git-creds-default.yml"
+		log.Info("No config server URL is specified, using the default one http://config-server:8888/master/git-creds-default.yml")
+	}
+	url := strings.Join([]string{configUrl, label, appName}, "/")
+	log.Info("final config-server-url", url)
+	resp, err := http.Get(url)
 	if err != nil {
 		log.Fatal(err)
 	}

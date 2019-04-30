@@ -119,7 +119,7 @@ func (c *Controller) processNextItem() bool {
 	// a code path of successful queue key processing
 	if !exists {
 		c.logger.Infof("Controller.processNextItem: object deleted detected: %s", keyRaw)
-		c.handler.ObjectDeleted(item)
+		c.handler.ObjectDeleted(item, c.clientset)
 		c.queue.Forget(key)
 	} else {
 		c.logger.Infof("Controller.processNextItem: object created detected: %s", keyRaw)
@@ -127,7 +127,6 @@ func (c *Controller) processNextItem() bool {
 		c.queue.Forget(key)
 	}
 
-	
 	// keep the worker loop running by returning true
 	return true
 }

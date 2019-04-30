@@ -30,9 +30,10 @@ type GitSecretSpec struct {
 	// Message and SomeValue are example custom spec fields
 	//
 	// this is where you would put your custom resource data
-	Appname string            `json:"appname"`
-	Label   string            `json:"label"`
-	Data    map[string]string `json:"data"`
+	Appname      string            `json:"appname"`
+	Organization string            `json:"organization"`
+	Label        string            `json:"label"`
+	Data         map[string]string `json:"data"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
