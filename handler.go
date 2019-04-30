@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"os"
 
 	log "github.com/Sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
@@ -108,6 +109,8 @@ func EnrichTemplateStr(templateStr string) string {
 }
 
 func getDataFromConfigServer() map[interface{}]interface{} {
+	profile := os.Getenv("profile")
+	
 	resp, err := http.Get("http://config-server:8888/master/git-creds-default.yml")
 	if err != nil {
 		log.Fatal(err)

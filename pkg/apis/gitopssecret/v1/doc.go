@@ -1,4 +1,4 @@
 // +k8s:deepcopy-gen=package
-// +groupName=scb.com
+// +groupName=gitopssecret
 
 package v1

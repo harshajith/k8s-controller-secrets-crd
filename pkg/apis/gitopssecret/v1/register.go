@@ -1,17 +1,16 @@
 package v1
 
 import (
+	"github.com/harshajith/k8s-controller-secrets-crd/pkg/apis/gitopssecret"
 	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-
-	scbsecret "github.com/harshajith/k8s-controller-secrets-crd/pkg/apis/scbsecret"
 )
 
 // GroupVersion is the identifier for the API which includes
 // the name of the group and the version of the API
 var SchemeGroupVersion = schema.GroupVersion{
-	Group:   scbsecret.GroupName,
+	Group:   gitopssecret.GroupName,
 	Version: "v1",
 }
 
@@ -28,12 +27,12 @@ func Resource(resource string) schema.GroupResource {
 }
 
 // addKnownTypes adds our types to the API scheme by registering
-// scbsecret and scbsecretList
+// gitopssecret and gitopssecretList
 func addKnownTypes(scheme *runtime.Scheme) error {
 	scheme.AddKnownTypes(
 		SchemeGroupVersion,
-		&ScbSecret{},
-		&ScbSecretList{},
+		&GitOpsSecret{},
+		&GitOpsSecretList{},
 	)
 
 	// register the type in the scheme
