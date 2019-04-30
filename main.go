@@ -12,12 +12,12 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 
-	scbsecretclientset "github.com/harshajith/k8s-controller-secrets-crd/pkg/client/clientset/versioned"
-	scbsecretinformer_v1 "github.com/harshajith/k8s-controller-secrets-crd/pkg/client/informers/externalversions/scbsecret/v1"
+	gitopssecretclientset "github.com/harshajith/k8s-controller-secrets-crd/pkg/client/clientset/versioned"
+	gitopssecretinformer_v1 "github.com/harshajith/k8s-controller-secrets-crd/pkg/client/informers/externalversions/gitopssecret/v1"
 )
 
 // retrieve the Kubernetes cluster client from outside of the cluster
-func getKubernetesClient() (kubernetes.Interface, scbsecretclientset.Interface) {
+func getKubernetesClient() (kubernetes.Interface, gitopssecretclientset.Interface) {
 	// construct the path to resolve to `~/.kube/config`
 	// kubeConfigPath := os.Getenv("HOME") + "/.kube/config"
 
@@ -39,24 +39,24 @@ func getKubernetesClient() (kubernetes.Interface, scbsecretclientset.Interface) 
 		log.Fatalf("getClusterConfig: %v", err)
 	}
 
-	scbsecretClient, err := scbsecretclientset.NewForConfig(config)
+	gitopssecretClient, err := gitopssecretclientset.NewForConfig(config)
 	if err != nil {
 		log.Fatalf("getClusterConfig: %v", err)
 	}
 
 	log.Info("Successfully constructed k8s client")
-	return client, scbsecretClient
+	return client, gitopssecretClient
 }
 
 // main code path
 func main() {
 	// get the Kubernetes client for connectivity
-	client, scbsecretClient := getKubernetesClient()
+	client, gitopssecretClient := getKubernetesClient()
 
 	// retrieve our custom resource informer which was generated from
 	// the code generator and pass it the custom resource client, specifying
 	// we should be looking through all namespaces for listing and watching
-	informer := scbsecretinformer_v1.NewScbSecretInformer(
+	informer := gitopssecretinformer_v1.New(
 		scbsecretClient,
 		meta_v1.NamespaceAll,
 		0,

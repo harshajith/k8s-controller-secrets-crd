@@ -1,4 +1,4 @@
 // +k8s:deepcopy-gen=package
-// +groupName=gitopssecret
+// +groupName=gitsecret.com
 
 package v1
