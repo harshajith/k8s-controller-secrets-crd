@@ -112,7 +112,7 @@ func main() {
 		clientset: client,
 		informer:  informer,
 		queue:     queue,
-		handler:   &TestHandler{},
+		handler:   &GitSecretHandler{},
 	}
 
 	// use a channel to synchronize the finalization for a graceful shutdown

@@ -17,6 +17,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+type ConfigServerClient struct {
+	Client  *http.Client
+	BaseURL string
+}
+
 // Handler interface contains the methods that are required
 type Handler interface {
 	Init() error
@@ -25,7 +30,7 @@ type Handler interface {
 	ObjectUpdated(objOld, objNew interface{}, clientset kubernetes.Interface)
 }
 
-// TestHandler is a sample implementation of Handler
+// GitSecretHandler is a sample implementation of Handler
 type GitSecretHandler struct{}
 
 // Init handles any handler initialization
@@ -39,10 +44,11 @@ func (t *GitSecretHandler) ObjectCreated(obj interface{}, clientset kubernetes.I
 	log.Info("TestHandler.ObjectCreated")
 	gitSecret, ok := obj.(*v1.GitSecret)
 	if ok {
-		secretPayload := getSecreteObj(gitSecret)
+		configClient := createConfigServerClient(gitSecret)
+		secretPayload := GetSecreteObj(gitSecret, configClient)
 		log.Info("Secret payload to be created", *secretPayload)
 		clientset.CoreV1().Secrets(gitSecret.ObjectMeta.Namespace).Create(secretPayload)
-		log.Info("secret is successfully created in default namespace")
+		log.Infof("secret is successfully updated in namespace %s", gitSecret.ObjectMeta.Namespace)
 	} else {
 		log.Error("Can not cast the object to GitSecret", obj)
 	}
@@ -66,25 +72,41 @@ func (t *GitSecretHandler) ObjectUpdated(objOld, objNew interface{}, clientset k
 	log.Info("TestHandler.ObjectUpdated")
 	gitSecret, ok := objNew.(*v1.GitSecret)
 	if ok {
-		secretPayload := getSecreteObj(gitSecret)
+		configClient := createConfigServerClient(gitSecret)
+		secretPayload := GetSecreteObj(gitSecret, configClient)
 		log.Info("Secret payload to be updated", *secretPayload)
 		clientset.CoreV1().Secrets(gitSecret.ObjectMeta.Namespace).Update(secretPayload)
-		log.Info("secret is successfully updated in default namespace")
+		log.Infof("secret is successfully updated in namespace %s", gitSecret.ObjectMeta.Namespace)
 	} else {
 		log.Error("Can not cast the object to GitSecret", objNew)
 	}
 
 }
 
-func getSecreteObj(gitSecret *v1.GitSecret) *corev1.Secret {
+func GetSecreteObj(gitSecret *v1.GitSecret, configClient *ConfigServerClient) *corev1.Secret {
 	log.Info("gitSecret val", gitSecret.Spec.Data)
 	templateStr := marshalToYamlStr(&gitSecret.Spec.Data)
-	data := enrichTemplateStr(templateStr, gitSecret)
+	data := enrichTemplateStr(templateStr, gitSecret, configClient)
 
 	enrichedDataMap := map[string]string{}
 	unmarshalYamlStr(data, &enrichedDataMap)
 	secret := populateSecretPayload(enrichedDataMap, gitSecret)
 	return secret
+}
+
+func createConfigServerClient(gitSecret *v1.GitSecret) *ConfigServerClient {
+	client := &http.Client{}
+	configURL, ok := os.LookupEnv("CONFIG_SERVER_URL")
+
+	if !ok {
+		configURL = "http://config-server:8888"
+		log.Info("No config server URL is specified, using the default one http://config-server:8888")
+	}
+
+	return &ConfigServerClient{
+		Client:  client,
+		BaseURL: configURL,
+	}
 }
 
 func populateSecretPayload(enrichedDataMap map[string]string, gitSecret *v1.GitSecret) *corev1.Secret {
@@ -114,8 +136,8 @@ func unmarshalYamlStr(data string, enrichedDataMap *map[string]string) {
 	log.Info("final map is: ", enrichedDataMap)
 }
 
-func enrichTemplateStr(templateStr string, gitSecret *v1.GitSecret) string {
-	data, err1 := mustache.Render(templateStr, getDataFromConfigServer(gitSecret))
+func enrichTemplateStr(templateStr string, gitSecret *v1.GitSecret, configClient *ConfigServerClient) string {
+	data, err1 := mustache.Render(templateStr, getDataFromConfigServer(gitSecret, configClient))
 	if err1 != nil {
 		log.Panic(err1)
 	}
@@ -123,9 +145,40 @@ func enrichTemplateStr(templateStr string, gitSecret *v1.GitSecret) string {
 	return data
 }
 
-func getDataFromConfigServer(gitSecret *v1.GitSecret) map[interface{}]interface{} {
+func getDataFromConfigServer(gitSecret *v1.GitSecret, configClient *ConfigServerClient) map[interface{}]interface{} {
+	response := QueryConfigServer(configClient, gitSecret)
+	m := make(map[interface{}]interface{})
+	err1 := yaml.Unmarshal(response, &m)
+	if err1 != nil {
+		log.Fatal(err1)
+	}
+	log.Info("Map created from config server data", m)
+	return m
+}
+
+// QueryConfigServer for the required secrets
+func QueryConfigServer(configClient *ConfigServerClient, gitSecret *v1.GitSecret) []byte {
+	username := os.Getenv("CONFIG_SERVER_USERNAME")
+	passwd := os.Getenv("CONFIG_SERVER_PASSWORD")
+	configServerURL := strings.Join([]string{configClient.BaseURL, GetConfigServerURLPath(gitSecret)}, "/")
+	log.Info("Config server URL: ", configServerURL)
+
+	req, err := http.NewRequest("GET", configServerURL, nil)
+	req.SetBasicAuth(username, passwd)
+	resp, err := configClient.Client.Do(req)
+	if err != nil {
+		log.Fatal(err)
+	}
+	body, _ := ioutil.ReadAll(resp.Body)
+	log.Info("response from config server: ", string(body))
+	return body
+}
+
+// GetConfigServerURLPath generates path based on the provided params in environment as
+// well as in GitSecret object
+func GetConfigServerURLPath(gitSecret *v1.GitSecret) string {
 	profile, profileOk := os.LookupEnv("PROFILE")
-	project, _ := gitSecret.Spec.Appname
+	project := gitSecret.Spec.Organization
 	if !profileOk {
 		profile = "default"
 	}
@@ -133,30 +186,19 @@ func getDataFromConfigServer(gitSecret *v1.GitSecret) map[interface{}]interface{
 	if len(label) == 0 {
 		label = "develop"
 	}
-	configUrl, ok := os.LookupEnv("CONFIG_SERVER_URL")
 	appName := strings.Join([]string{project, "(_)", gitSecret.Spec.Appname, "-", profile, ".yml"}, "")
-	if !ok {
-		configUrl = "http://config-server:8888/master/git-creds-default.yml"
-		log.Info("No config server URL is specified, using the default one http://config-server:8888/master/git-creds-default.yml")
-	}
-	url := strings.Join([]string{configUrl, label, appName}, "/")
-	log.Info("final config-server-url", url)
-	resp, err := http.Get(url)
+	url := strings.Join([]string{label, appName}, "/")
+	log.Info("Config server url: ", url)
+	return url
+}
+
+func DoStuff(api *ConfigServerClient) ([]byte, error) {
+	resp, err := api.Client.Get(api.BaseURL + "/some/path")
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
-	body, _ := ioutil.ReadAll(resp.Body)
-	log.Info("response from config server: ", string(body))
-
-	m := make(map[interface{}]interface{})
-
-	err1 := yaml.Unmarshal(body, &m)
-	if err1 != nil {
-		log.Fatal(err1)
-	}
-
-	log.Info("map value foo", m["foo"])
-	log.Info("nested value", m["eureka.client.serviceUrl.defaultZone"])
-
-	return m
+	defer resp.Body.Close()
+	body, err := ioutil.ReadAll(resp.Body)
+	// handling error and doing stuff with body that needs to be unit tested
+	return body, err
 }
