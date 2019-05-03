@@ -83,7 +83,6 @@ func TestDoStuffWithTestServer(t *testing.T) {
 
 	ok(t, err)
 	equals(t, []byte("OK"), body)
-
 }
 
 // assert fails the test if the condition is false.
